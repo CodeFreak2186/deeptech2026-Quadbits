@@ -30,31 +30,38 @@ dataset/
 
 ## Dataset Statistics
 
-### Total Images: 5,276
+### Total Images: 5,287
 
 ### Class Distribution
 
 | Class      | Train  | Test | Valid | Total | Description                              |
 |------------|--------|------|-------|-------|------------------------------------------|
-| open       | 1,000  | 0    | 0     | 1,000 | Broken lines, open circuits, pin-holes  |
-| Particle   | 723    | 96   | 181   | 1,000 | Contamination, particle defects         |
-| Scratch    | 715    | 95   | 190   | 1,000 | CMP scratches, surface scratches        |
-| Etch       | 578    | 86   | 181   | 845   | Block etch, incomplete etch patterns    |
+| Open       | 707    | 151  | 153   | 1,011 | Broken lines, open circuits, pin-holes  |
+| Particle   | 700    | 150  | 150   | 1,000 | Contamination, particle defects         |
+| Scratch    | 700    | 150  | 150   | 1,000 | CMP scratches, surface scratches        |
+| Etch       | 591    | 126  | 128   | 845   | Block etch, incomplete etch patterns    |
 | Clean      | 545    | 116  | 118   | 779   | Clean/normal wafer surfaces             |
-| Other      | 293    | 49   | 69    | 411   | Miscellaneous defects                   |
-| Bridge     | 111    | 5    | 16    | 132   | Shorts, metal bridges                   |
-| Thermal    | 73     | 16   | 20    | 109   | SEZ burnt, heat damage                  |
+| Other      | 287    | 61   | 63    | 411   | Miscellaneous defects                   |
+| Bridge     | 92     | 19   | 21    | 132   | Shorts, metal bridges                   |
+| Thermal    | 76     | 16   | 17    | 109   | SEZ burnt, heat damage                  |
 
 ### Split Distribution
 
-- **Train**: 4,038 images (76.5%)
-- **Test**: 463 images (8.8%)
-- **Valid**: 775 images (14.7%)
+- **Train**: 3,698 images (69.9%)
+- **Test**: 789 images (14.9%)
+- **Valid**: 800 images (15.1%)
+
+**✨ All classes now have proper representation in all three splits!**
 
 ## Defect Classes
 
-### 1. Bridge (132 images)
-Metal bridges and electrical shorts between wafer components. Critical defects that cause functional failures.
+### 1. Open (1,011 images)
+Open circuit defects including:
+- Broken metal lines
+- Pin-holes
+- Disconnected traces
+
+Most common defect type in the dataset, now with proper train/test/valid distribution.
 
 ### 2. Particle (1,000 images)
 Contamination defects including:
@@ -73,29 +80,24 @@ Etching-related defects:
 - Incomplete etch patterns
 - Pitted surfaces
 
-### 5. open (1,000 images)
-**⚠️ Note: Only available in training set**
+### 5. Clean (779 images)
+Normal/defect-free wafer surfaces used as baseline for comparison and binary classification tasks.
 
-Open circuit defects including:
-- Broken metal lines
-- Pin-holes
-- Disconnected traces
+### 6. Other (411 images)
+Miscellaneous defects that don't fit into primary categories:
+- Coating defects
+- Copper issues
+- Crazing patterns
 
-### 6. Thermal (109 images)
+### 7. Bridge (132 images)
+Metal bridges and electrical shorts between wafer components. Critical defects that cause functional failures.
+
+### 8. Thermal (109 images)
 Heat-related damage:
 - SEZ burnt areas
 - Thermal stress patterns
 
 One of the rarest defect types in the dataset.
-
-### 7. Clean (779 images)
-Normal/defect-free wafer surfaces used as baseline for comparison and binary classification tasks.
-
-### 8. Other (411 images)
-Miscellaneous defects that don't fit into primary categories:
-- Coating defects
-- Copper issues
-- Crazing patterns
 
 ## Data Gathering Process
 
@@ -246,21 +248,16 @@ Due to class imbalance, use multiple metrics:
    - Thermal (109) and Bridge (132) classes are significantly underrepresented
    - This reflects real-world defect occurrence rates but requires balancing for training
 
-2. **Open Class Split Issue**: 
-   - open class only exists in training set (1,000 images)
-   - No test/validation data available for this class
-   - Consider splitting train data for evaluation
-
-3. **Image Quality Variation**: 
+2. **Image Quality Variation**: 
    - Variable resolution across images
    - Different lighting conditions from multiple sources
    - Requires normalization during preprocessing
 
-4. **Label Consistency**: 
+3. **Label Consistency**: 
    - Potential mislabeling in multi-defect images
    - Some defects may be subjectively categorized into "Other"
 
-5. **Real-World Application**: 
+4. **Real-World Application**: 
    - Dataset shows real semiconductor manufacturing defect distribution
    - Balancing needed for fair model training but imbalance is intentionally preserved to demonstrate data gathering
 
@@ -359,11 +356,19 @@ Please refer to individual dataset licenses when using this data.
 
 ## Version History
 
+### Version 1.1 (February 8, 2026)
+- **Complete dataset redistribution** with proper 70/15/15 splits
+- All classes now have representation in train/test/valid sets
+- Open class now includes test and validation data (previously train-only)
+- Total images: 5,287 (increased from 5,276)
+- Improved split ratios: 69.9% / 14.9% / 15.1%
+- Standardized image naming: `ClassName_Split_SerialNo.ext`
+
 ### Version 1.0 (February 2026)
 - Initial dataset compilation from 3+ sources
 - 8 defect classes established
 - 5,276 total images organized
-- Train/test/valid splits created (76.5% / 8.8% / 14.7%)
+- Train/test/valid splits created
 - Class balancing applied (max 1,000 images per class)
 - Documentation completed
 
@@ -386,9 +391,9 @@ For questions, issues, or contributions:
 ---
 
 **Dataset Name**: Wafer Defect Detection Dataset  
-**Version**: 1.0  
+**Version**: 1.1  
 **Last Updated**: February 8, 2026  
-**Total Images**: 5,276  
+**Total Images**: 5,287  
 **Classes**: 8  
 **Format**: RGB Images (JPEG/PNG/BMP)  
 **Purpose**: Demonstrating data gathering and compilation skills for semiconductor defect detection
