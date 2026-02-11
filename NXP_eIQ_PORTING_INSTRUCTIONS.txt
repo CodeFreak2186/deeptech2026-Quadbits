@@ -1,0 +1,652 @@
+================================================================================
+     NXP eIQ PORTED MODEL — INSTRUCTION STACK
+     Wafer Defect Detection | MobileNetV2 | Quadbits PS01
+================================================================================
+
+Model:          modelv1 (MobileNetV2, 8-class wafer defect classifier)
+Source Format:  ONNX (modelv1.onnx + modelv1.onnx.data)
+Target:         NXP i.MX 8M Plus / i.MX 93 / i.MX RT1170 (eIQ compatible)
+Framework:      NXP eIQ Toolkit + ONNX Runtime / TFLite Delegate
+Date:           February 2026
+
+================================================================================
+  INSTRUCTION STACK OVERVIEW
+================================================================================
+
+  ┌─────────────────────────────────────────────┐
+  │  STEP 1: Environment Setup                  │
+  │  STEP 2: Model Export (PyTorch → ONNX)      │
+  │  STEP 3: ONNX Model Validation              │
+  │  STEP 4: eIQ Toolkit — Model Import         │
+  │  STEP 5: Model Quantization (FP32 → INT8)   │
+  │  STEP 6: ONNX → TFLite Conversion           │
+  │  STEP 7: Neutron NPU Compilation (optional)  │
+  │  STEP 8: Deploy to i.MX Target Board        │
+  │  STEP 9: Run Inference on Target             │
+  │  STEP 10: Validate Ported Model Results      │
+  └─────────────────────────────────────────────┘
+
+================================================================================
+  STEP 1: ENVIRONMENT SETUP
+================================================================================
+
+1.1  Install NXP eIQ Toolkit (Host Machine — Windows/Linux)
+     ─────────────────────────────────────────────────────
+     Download: https://www.nxp.com/eiq
+     
+     # Install eIQ Portal (GUI) or CLI tools
+     $ pip install eiq-toolkit
+     $ pip install eiq-converter-onnx2tflite
+     $ pip install onnxruntime
+
+1.2  Install Required Python Dependencies
+     ─────────────────────────────────────
+     $ pip install torch>=2.0.0
+     $ pip install torchvision>=0.15.0
+     $ pip install onnx>=1.14.0
+     $ pip install onnxruntime>=1.14.0
+     $ pip install numpy>=1.21.0
+     $ pip install pillow>=9.0.0
+
+1.3  Verify eIQ Toolkit Installation
+     ────────────────────────────────
+     $ eiq --version
+     $ eiq-converter-onnx2tflite --help
+
+1.4  Set Up Target Board SDK
+     ───────────────────────
+     # For i.MX 8M Plus:
+     #   - Install Yocto BSP with meta-imx/meta-ml layer
+     #   - Ensure TFLite runtime + VX Delegate are built
+     # For MCUXpresso (i.MX RT series):
+     #   - Install MCUXpresso SDK with eIQ middleware
+
+================================================================================
+  STEP 2: MODEL EXPORT (PyTorch → ONNX)
+================================================================================
+
+  Status: ✅ ALREADY COMPLETED
+  File:   modelv1/modelv1.onnx + modelv1.onnx.data
+
+2.1  Export Command (Reference — already executed in train.ipynb)
+     ──────────────────────────────────────────────────────────
+
+     import torch
+     from torchvision import models
+     import torch.nn as nn
+
+     # Load trained model
+     model = models.mobilenet_v2()
+     model.classifier[1] = nn.Linear(1280, 8)
+     model.load_state_dict(torch.load("modelv1/modelv1.pth"))
+     model.eval()
+
+     # Export to ONNX
+     dummy_input = torch.randn(1, 3, 224, 224)
+     torch.onnx.export(
+         model,
+         dummy_input,
+         "modelv1/modelv1.onnx",
+         export_params=True,
+         opset_version=11,
+         do_constant_folding=True,
+         input_names=["input"],
+         output_names=["output"],
+         dynamic_axes={
+             "input":  {0: "batch"},
+             "output": {0: "batch"}
+         }
+     )
+
+2.2  ONNX Model Specifications
+     ─────────────────────────
+     Input Name:      "input"
+     Input Shape:     [1, 3, 224, 224]  (batch, channels, height, width)
+     Input Type:      float32
+     Output Name:     "output"
+     Output Shape:    [1, 8]            (batch, num_classes)
+     Output Type:     float32 (logits)
+     Opset Version:   11 (exported), 18 (auto-upgraded by runtime)
+     Data Layout:     NCHW (Channels First)
+
+================================================================================
+  STEP 3: ONNX MODEL VALIDATION
+================================================================================
+
+3.1  Validate ONNX Model Structure
+     ─────────────────────────────
+
+     import onnx
+
+     model = onnx.load("modelv1/modelv1.onnx")
+     onnx.checker.check_model(model)
+     print("ONNX model is valid!")
+     print(f"Opset version: {model.opset_import[0].version}")
+     print(f"Graph inputs: {[i.name for i in model.graph.input]}")
+     print(f"Graph outputs: {[o.name for o in model.graph.output]}")
+
+3.2  Test ONNX Inference on Host
+     ───────────────────────────
+
+     import onnxruntime as ort
+     import numpy as np
+
+     session = ort.InferenceSession("modelv1/modelv1.onnx")
+     dummy = np.random.randn(1, 3, 224, 224).astype(np.float32)
+     result = session.run(["output"], {"input": dummy})
+     print(f"Output shape: {result[0].shape}")  # Expected: (1, 8)
+     print(f"Predictions: {result[0]}")
+
+3.3  Expected Validation Output
+     ─────────────────────────
+     ONNX model is valid!
+     Opset version: 18
+     Graph inputs: ['input']
+     Graph outputs: ['output']
+     Output shape: (1, 8)
+
+================================================================================
+  STEP 4: eIQ TOOLKIT — MODEL IMPORT (BYOM)
+================================================================================
+
+4.1  Using eIQ Portal (GUI Method)
+     ─────────────────────────────
+     1. Launch eIQ Portal:
+        $ eiq-portal
+
+     2. Click "Import Model" → Select "ONNX" format
+
+     3. Browse to: modelv1/modelv1.onnx
+
+     4. Configure import settings:
+        - Model Name:     "wafer_defect_mobilenetv2"
+        - Task Type:      "Image Classification"
+        - Input Shape:    [1, 3, 224, 224]
+        - Data Layout:    NCHW
+        - Labels:         Bridge, Clean, Etch, Open, Other,
+                          Particle, Scratch, Thermal
+
+     5. Click "Import" → Model will be validated and imported
+
+4.2  Using eIQ CLI (Command-Line Method)
+     ────────────────────────────────────
+     $ eiq import \
+         --model modelv1/modelv1.onnx \
+         --name wafer_defect_mobilenetv2 \
+         --task classification \
+         --input-shape 1,3,224,224 \
+         --labels "Bridge,Clean,Etch,Open,Other,Particle,Scratch,Thermal"
+
+================================================================================
+  STEP 5: MODEL QUANTIZATION (FP32 → INT8)
+================================================================================
+
+  Purpose: Reduce model size and enable NPU acceleration
+  Method:  Post-Training Quantization (PTQ) with calibration data
+
+5.1  Prepare Calibration Dataset
+     ───────────────────────────
+     # Use a representative subset of training images (100-200 images)
+
+     import os
+     import numpy as np
+     from PIL import Image
+     from torchvision import transforms
+
+     transform = transforms.Compose([
+         transforms.Grayscale(num_output_channels=3),
+         transforms.Resize((224, 224)),
+         transforms.ToTensor(),
+         transforms.Normalize([0.5], [0.5])
+     ])
+
+     calibration_data = []
+     train_dir = "main/train"
+     for class_name in os.listdir(train_dir):
+         class_path = os.path.join(train_dir, class_name)
+         images = os.listdir(class_path)[:15]  # 15 per class × 8 = 120
+         for img_name in images:
+             img = Image.open(os.path.join(class_path, img_name))
+             tensor = transform(img).numpy()
+             calibration_data.append(tensor)
+
+     calibration_data = np.array(calibration_data, dtype=np.float32)
+     np.save("calibration_data.npy", calibration_data)
+
+5.2  Quantize with eIQ ONNX2Quant Tool
+     ──────────────────────────────────
+
+     $ eiq-onnx2quant \
+         --input modelv1/modelv1.onnx \
+         --output modelv1/modelv1_quantized.onnx \
+         --calibration-data calibration_data.npy \
+         --quantization-type int8 \
+         --per-channel
+
+     # Alternative: Using ONNX Runtime quantization
+     from onnxruntime.quantization import quantize_dynamic, QuantType
+
+     quantize_dynamic(
+         "modelv1/modelv1.onnx",
+         "modelv1/modelv1_int8.onnx",
+         weight_type=QuantType.QInt8
+     )
+
+5.3  Quantization Results (Expected)
+     ───────────────────────────────
+     Original Model Size (FP32):   ~8.75 MB
+     Quantized Model Size (INT8):  ~2.2 MB  (approx. 4x reduction)
+     Accuracy Drop (expected):     1-3%     (within acceptable range)
+
+================================================================================
+  STEP 6: ONNX → TFLite CONVERSION (for NPU Deployment)
+================================================================================
+
+  Required for: i.MX 8M Plus (VX Delegate NPU acceleration)
+  Tool:         eiq-converter-onnx2tflite
+
+6.1  Convert ONNX to TFLite
+     ──────────────────────
+
+     $ eiq-converter-onnx2tflite \
+         --input modelv1/modelv1_quantized.onnx \
+         --output modelv1/modelv1.tflite \
+         --input-shapes "input:1,3,224,224"
+
+     # Note: Converter handles NCHW → NHWC transpose automatically
+
+6.2  Verify TFLite Model
+     ───────────────────
+
+     import tensorflow as tf
+
+     interpreter = tf.lite.Interpreter(model_path="modelv1/modelv1.tflite")
+     interpreter.allocate_tensors()
+
+     input_details = interpreter.get_input_details()
+     output_details = interpreter.get_output_details()
+
+     print(f"Input shape:  {input_details[0]['shape']}")
+     print(f"Input dtype:  {input_details[0]['dtype']}")
+     print(f"Output shape: {output_details[0]['shape']}")
+     print(f"Output dtype: {output_details[0]['dtype']}")
+
+6.3  Expected TFLite Specs
+     ─────────────────────
+     Input Shape:   [1, 224, 224, 3]  (NHWC format after conversion)
+     Input Type:    int8 / float32
+     Output Shape:  [1, 8]
+     Output Type:   int8 / float32
+
+================================================================================
+  STEP 7: NEUTRON NPU COMPILATION (Optional — for NPU-enabled SoCs)
+================================================================================
+
+  Applicable for: i.MX RT700, i.MX 95, i.MX 943 with Neutron NPU
+
+7.1  Convert with onnx2neutron Tool
+     ──────────────────────────────
+
+     $ onnx2neutron \
+         --input modelv1/modelv1_quantized.onnx \
+         --output modelv1/modelv1_neutron.onnx
+
+7.2  Verify Neutron Model
+     ───────────────────
+
+     import onnxruntime as ort
+
+     # Use Neutron execution provider
+     session = ort.InferenceSession(
+         "modelv1/modelv1_neutron.onnx",
+         providers=["NeutronExecutionProvider"]
+     )
+
+================================================================================
+  STEP 8: DEPLOY TO i.MX TARGET BOARD
+================================================================================
+
+8.1  Transfer Model to Target Device
+     ───────────────────────────────
+
+     # Option A: SCP over network
+     $ scp modelv1/modelv1.tflite root@<imx-ip>:/opt/models/
+
+     # Option B: Copy to SD card
+     $ cp modelv1/modelv1.tflite /media/sdcard/models/
+
+     # Option C: ONNX Runtime deployment (no TFLite conversion needed)
+     $ scp modelv1/modelv1.onnx root@<imx-ip>:/opt/models/
+
+8.2  Transfer Labels File
+     ───────────────────
+
+     # Create labels.txt
+     $ echo "Bridge
+     Clean
+     Etch
+     Open
+     Other
+     Particle
+     Scratch
+     Thermal" > labels.txt
+
+     $ scp labels.txt root@<imx-ip>:/opt/models/
+
+8.3  Directory Structure on Target
+     ────────────────────────────
+
+     /opt/models/
+     ├── modelv1.tflite         # Quantized TFLite model
+     ├── modelv1.onnx           # ONNX model (for ONNX Runtime)
+     ├── labels.txt             # Class labels
+     └── test_images/           # Sample test images
+         ├── sample_bridge.jpg
+         ├── sample_clean.jpg
+         └── ...
+
+================================================================================
+  STEP 9: RUN INFERENCE ON TARGET
+================================================================================
+
+9.1  Method A: ONNX Runtime Inference (on i.MX Linux)
+     ─────────────────────────────────────────────────
+
+     #!/usr/bin/env python3
+     # File: inference_onnx.py (run on target device)
+
+     import onnxruntime as ort
+     import numpy as np
+     from PIL import Image
+
+     CLASSES = ["Bridge", "Clean", "Etch", "Open",
+                "Other", "Particle", "Scratch", "Thermal"]
+
+     # Load model
+     session = ort.InferenceSession("/opt/models/modelv1.onnx")
+
+     # Preprocess image
+     def preprocess(image_path):
+         img = Image.open(image_path).convert("L")  # Grayscale
+         img = img.resize((224, 224))
+         arr = np.array(img, dtype=np.float32) / 255.0
+         arr = (arr - 0.5) / 0.5  # Normalize
+         arr = np.stack([arr, arr, arr], axis=0)  # Grayscale → 3-ch
+         return arr[np.newaxis, ...]  # Add batch dim: [1, 3, 224, 224]
+
+     # Run inference
+     input_data = preprocess("/opt/models/test_images/sample_clean.jpg")
+     output = session.run(["output"], {"input": input_data})
+
+     # Get prediction
+     probabilities = np.exp(output[0]) / np.sum(np.exp(output[0]))
+     predicted_class = CLASSES[np.argmax(probabilities)]
+     confidence = np.max(probabilities)
+
+     print(f"Predicted: {predicted_class} ({confidence:.2%})")
+
+9.2  Method B: TFLite Inference with VX Delegate (NPU accelerated)
+     ─────────────────────────────────────────────────────────────
+
+     #!/usr/bin/env python3
+     # File: inference_tflite.py (run on i.MX 8M Plus with NPU)
+
+     import numpy as np
+     from PIL import Image
+     import tflite_runtime.interpreter as tflite
+
+     CLASSES = ["Bridge", "Clean", "Etch", "Open",
+                "Other", "Particle", "Scratch", "Thermal"]
+
+     # Load TFLite model with VX Delegate for NPU
+     delegate = tflite.load_delegate("/usr/lib/libvx_delegate.so")
+     interpreter = tflite.Interpreter(
+         model_path="/opt/models/modelv1.tflite",
+         experimental_delegates=[delegate]
+     )
+     interpreter.allocate_tensors()
+
+     input_details = interpreter.get_input_details()
+     output_details = interpreter.get_output_details()
+
+     # Preprocess (NHWC format for TFLite)
+     def preprocess(image_path):
+         img = Image.open(image_path).convert("L")
+         img = img.resize((224, 224))
+         arr = np.array(img, dtype=np.float32) / 255.0
+         arr = (arr - 0.5) / 0.5
+         arr = np.stack([arr, arr, arr], axis=-1)  # NHWC: [224, 224, 3]
+         return arr[np.newaxis, ...]  # [1, 224, 224, 3]
+
+     # Run inference
+     input_data = preprocess("/opt/models/test_images/sample_clean.jpg")
+     interpreter.set_tensor(input_details[0]["index"], input_data)
+     interpreter.invoke()
+
+     output_data = interpreter.get_tensor(output_details[0]["index"])
+     predicted_class = CLASSES[np.argmax(output_data)]
+     confidence = np.max(output_data)
+
+     print(f"Predicted: {predicted_class} ({confidence:.2%})")
+
+9.3  Method C: C++ Inference (Production Deployment)
+     ───────────────────────────────────────────────
+
+     // File: inference.cpp
+     // Build with: g++ -o inference inference.cpp -ltflite -ldl
+
+     #include <tensorflow/lite/interpreter.h>
+     #include <tensorflow/lite/model.h>
+     #include <tensorflow/lite/kernels/register.h>
+
+     // Load model
+     auto model = tflite::FlatBufferModel::BuildFromFile(
+         "/opt/models/modelv1.tflite");
+     tflite::ops::builtin::BuiltinOpResolver resolver;
+     std::unique_ptr<tflite::Interpreter> interpreter;
+     tflite::InterpreterBuilder(*model, resolver)(&interpreter);
+     interpreter->AllocateTensors();
+
+     // Set input data, invoke, read output
+     // (See NXP eIQ C++ examples for full implementation)
+
+================================================================================
+  STEP 10: VALIDATE PORTED MODEL RESULTS
+================================================================================
+
+10.1  Expected Ported Model Performance
+      ─────────────────────────────────
+
+      ┌─────────────────────────┬────────────┬────────────────┐
+      │ Metric                  │ Original   │ Ported (est.)  │
+      │                         │ (FP32/CPU) │ (INT8/NPU)     │
+      ├─────────────────────────┼────────────┼────────────────┤
+      │ Test Accuracy           │ 65.27%     │ ~62-64%        │
+      │ Model Size              │ 8.75 MB    │ ~2.2 MB        │
+      │ Inference Time (CPU)    │ ~30 ms     │ ~15-20 ms      │
+      │ Inference Time (NPU)    │ N/A        │ ~3-5 ms        │
+      │ Power Consumption       │ ~5W (CPU)  │ ~0.5W (NPU)    │
+      │ Format                  │ ONNX/FP32  │ TFLite/INT8    │
+      └─────────────────────────┴────────────┴────────────────┘
+
+      Note: Slight accuracy drop (1-3%) is expected and acceptable
+      after INT8 quantization. Speed improvement is 6-10× on NPU.
+
+10.2  Run Validation Script on Target
+      ───────────────────────────────
+
+      #!/usr/bin/env python3
+      # File: validate_ported.py
+
+      import os
+      import numpy as np
+      from PIL import Image
+      import onnxruntime as ort
+      from sklearn.metrics import (
+          accuracy_score, precision_score,
+          recall_score, confusion_matrix,
+          classification_report
+      )
+
+      CLASSES = ["Bridge", "Clean", "Etch", "Open",
+                 "Other", "Particle", "Scratch", "Thermal"]
+
+      session = ort.InferenceSession("/opt/models/modelv1.onnx")
+
+      y_true, y_pred = [], []
+
+      test_dir = "/opt/models/test_images/"
+      for class_idx, class_name in enumerate(CLASSES):
+          class_path = os.path.join(test_dir, class_name)
+          if not os.path.exists(class_path):
+              continue
+          for img_name in os.listdir(class_path):
+              img = Image.open(os.path.join(class_path, img_name))
+              img = img.convert("L").resize((224, 224))
+              arr = np.array(img, dtype=np.float32) / 255.0
+              arr = (arr - 0.5) / 0.5
+              arr = np.stack([arr]*3, axis=0)[np.newaxis, ...]
+
+              output = session.run(["output"], {"input": arr})
+              pred = np.argmax(output[0])
+
+              y_true.append(class_idx)
+              y_pred.append(pred)
+
+      # Print results
+      print("=" * 60)
+      print("  PORTED MODEL VALIDATION RESULTS")
+      print("=" * 60)
+      print(f"Accuracy:  {accuracy_score(y_true, y_pred):.4f}")
+      print(f"Precision: {precision_score(y_true, y_pred, average='macro'):.4f}")
+      print(f"Recall:    {recall_score(y_true, y_pred, average='macro'):.4f}")
+      print()
+      print("Classification Report:")
+      print(classification_report(y_true, y_pred, target_names=CLASSES))
+      print("Confusion Matrix:")
+      print(confusion_matrix(y_true, y_pred))
+
+================================================================================
+  APPENDIX A: eIQ SOFTWARE STACK ARCHITECTURE
+================================================================================
+
+      ┌─────────────────────────────────────────────────────┐
+      │                  APPLICATION LAYER                   │
+      │   (wafer_defect_inference.py / inference.cpp)       │
+      ├─────────────────────────────────────────────────────┤
+      │               eIQ INFERENCE ENGINES                  │
+      │  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+      │  │   ONNX   │  │  TFLite  │  │ TFLite + VX    │    │
+      │  │ Runtime  │  │ Runtime  │  │ Delegate (NPU) │    │
+      │  └──────────┘  └──────────┘  └────────────────┘    │
+      ├─────────────────────────────────────────────────────┤
+      │                   NXP eIQ TOOLKIT                    │
+      │  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+      │  │   eIQ    │  │ ONNX2    │  │ onnx2neutron   │    │
+      │  │  Portal  │  │ TFLite   │  │ (NPU compiler) │    │
+      │  └──────────┘  └──────────┘  └────────────────┘    │
+      ├─────────────────────────────────────────────────────┤
+      │                  HARDWARE LAYER                      │
+      │  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+      │  │  Arm     │  │   GPU    │  │   NPU          │    │
+      │  │ Cortex-A │  │ (if any) │  │ (Neutron/VX)   │    │
+      │  └──────────┘  └──────────┘  └────────────────┘    │
+      │                 i.MX SoC                             │
+      └─────────────────────────────────────────────────────┘
+
+================================================================================
+  APPENDIX B: MODEL CONVERSION FLOW
+================================================================================
+
+      PyTorch (.pth)
+          │
+          ▼
+      ┌──────────────────────┐
+      │  torch.onnx.export() │  ◄── STEP 2 (COMPLETED)
+      └──────────┬───────────┘
+                 │
+                 ▼
+      ONNX Model (.onnx)
+          │
+          ├──────────────────────────────────────┐
+          │                                      │
+          ▼                                      ▼
+      ┌──────────────────┐         ┌──────────────────────────┐
+      │  eiq-onnx2quant  │         │   ONNX Runtime (direct)  │
+      │  (INT8 Quantize) │         │   → CPU inference        │
+      └────────┬─────────┘         └──────────────────────────┘
+               │
+               ▼
+      Quantized ONNX (.onnx, INT8)
+          │
+          ├──────────────────────────────────┐
+          │                                  │
+          ▼                                  ▼
+      ┌──────────────────────┐    ┌────────────────────────┐
+      │ eiq-onnx2tflite      │    │ onnx2neutron           │
+      │ → TFLite model       │    │ → Neutron NPU model    │
+      └────────┬─────────────┘    └────────┬───────────────┘
+               │                           │
+               ▼                           ▼
+      ┌──────────────────────┐    ┌────────────────────────┐
+      │ TFLite + VX Delegate │    │ ONNX RT + Neutron EP   │
+      │ → i.MX 8M Plus NPU  │    │ → i.MX RT700 NPU      │
+      └──────────────────────┘    └────────────────────────┘
+
+================================================================================
+  APPENDIX C: SUPPORTED NXP PLATFORMS
+================================================================================
+
+      Platform          │ CPU        │ NPU         │ Recommended Engine
+      ──────────────────┼────────────┼─────────────┼────────────────────
+      i.MX 8M Plus      │ Cortex-A53 │ VeriSilicon │ TFLite + VX Delegate
+      i.MX 93           │ Cortex-A55 │ Arm Ethos   │ TFLite + Ethos-U
+      i.MX RT1170       │ Cortex-M7  │ None        │ TFLite (CPU only)
+      i.MX RT700        │ Cortex-M33 │ Neutron NPU │ ONNX RT + Neutron EP
+      i.MX 95           │ Cortex-A55 │ Neutron NPU │ ONNX RT + Neutron EP
+
+================================================================================
+  APPENDIX D: FILE MANIFEST
+================================================================================
+
+      File                          │ Size     │ Format  │ Purpose
+      ──────────────────────────────┼──────────┼─────────┼─────────────────────
+      modelv1.pth                   │ 8.76 MB  │ PyTorch │ Training checkpoint
+      modelv1.onnx + .onnx.data     │ 8.75 MB  │ ONNX    │ Cross-platform model
+      modelv1.pkl                   │ 8.75 MB  │ Pickle  │ Serialized weights
+      modelv1_quantized.onnx (*)    │ ~2.2 MB  │ ONNX    │ INT8 quantized
+      modelv1.tflite (*)            │ ~2.2 MB  │ TFLite  │ NPU deployment
+      labels.txt                    │ < 1 KB   │ Text    │ Class names
+
+      (*) = Generated during eIQ porting process
+
+================================================================================
+  REFERENCES
+================================================================================
+
+  [1] NXP eIQ Toolkit Documentation
+      https://www.nxp.com/design/design-center/software/eiq-ml-development-environment
+
+  [2] i.MX Machine Learning User's Guide
+      https://www.nxp.com/docs/en/user-guide/IMX-MACHINE-LEARNING-UG.pdf
+
+  [3] NXP eIQ Portal — Bring Your Own Model (BYOM) Guide
+      https://www.nxp.com/eiq-portal
+
+  [4] eiq-converter-onnx2tflite Documentation
+      https://github.com/NXP/eiq-converter-onnx2tflite
+
+  [5] ONNX Runtime on NXP i.MX
+      https://www.nxp.com/docs/en/application-note/AN13900.pdf
+
+  [6] TFLite VX Delegate for i.MX 8M Plus
+      https://www.nxp.com/docs/en/user-guide/IMX-TFLITE-VX-DELEGATE-UG.pdf
+
+  [7] MobileNetV2 Architecture Reference
+      Sandler et al., "MobileNetV2: Inverted Residuals and Linear
+      Bottlenecks", CVPR 2018. arXiv:1801.04381
+
+================================================================================
+  END OF INSTRUCTION STACK
+  Quadbits — PS01 | February 2026
+================================================================================
